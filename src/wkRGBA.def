@@ -1,0 +1,8 @@
+LIBRARY wkRGBA
+EXPORTS
+    wkRGBAStatus
+    wkRGBALastError
+    wkRGBALoad
+    wkRGBASync
+    wkRGBADraw
+    wkRGBAClear

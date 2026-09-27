@@ -1,0 +1,17 @@
+/build*/
+/dist/
+/test-output/
+/.vs/
+/CMakeFiles/
+/CMakeCache.txt
+*.user
+*.suo
+*.log
+*.trace
+*.pdb
+*.obj
+*.lib
+*.exp
+*.dll
+*.exe
+__pycache__/
