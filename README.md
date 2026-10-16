@@ -69,7 +69,7 @@ The 112-colour fallback allows a client without wkRGBA to display the same basic
 
 ## Requirements
 
-- Worms Armageddon 3.8.1
+- Worms Armageddon 3.8.1 (GOG or Steam executable)
 - Direct3D 9 Shader selected as the game's graphics renderer
 - WormKit module loading enabled
 - Windows with Direct3D 9 support
