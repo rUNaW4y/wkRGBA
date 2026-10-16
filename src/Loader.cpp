@@ -74,6 +74,7 @@ struct Store {
 Store& store(){static auto* p=new Store;return *p;}
 std::filesystem::path savedLevels;
 std::filesystem::path gameRoot;
+std::filesystem::path runtimeDirectory;
 std::filesystem::path logPath;
 thread_local bool inside=false;
 void log(const std::string& text) noexcept {
@@ -87,6 +88,16 @@ void clearRuntimeDirectory(const std::filesystem::path& directory) noexcept {
             std::filesystem::remove_all(entry.path(),error);
         }
     }catch(...){}
+}
+bool createSessionTempFile(const wchar_t* prefix,wchar_t (&file)[MAX_PATH+1]) noexcept {
+    try {
+        std::filesystem::path directory=runtimeDirectory;
+        if(directory.empty())directory=std::filesystem::temp_directory_path();
+        std::filesystem::create_directories(directory);
+        const auto wide=directory.wstring();
+        if(wide.empty()||wide.size()>=MAX_PATH)return false;
+        return GetTempFileNameW(wide.c_str(),prefix,0,file)!=0;
+    }catch(...){return false;}
 }
 std::wstring lower(std::wstring s){std::transform(s.begin(),s.end(),s.begin(),[](wchar_t c){return wchar_t(towlower(c));});return s;}
 bool candidate(const std::filesystem::path& path) {
@@ -143,7 +154,13 @@ bool isLandData(const std::filesystem::path& path) noexcept {
 }
 void clearThemeProxy(Store& cache) noexcept {
     if(cache.themeProxyKeeper!=INVALID_HANDLE_VALUE){CloseHandle(cache.themeProxyKeeper);cache.themeProxyKeeper=INVALID_HANDLE_VALUE;}
+    if(!cache.themeProxyPath.empty())DeleteFileW(cache.themeProxyPath.c_str());
     cache.themeProxyPath.clear();cache.themeSize=0;cache.themeHeight=0;
+}
+void clearMapProxy(Store& cache) noexcept {
+    if(cache.proxyKeeper!=INVALID_HANDLE_VALUE){CloseHandle(cache.proxyKeeper);cache.proxyKeeper=INVALID_HANDLE_VALUE;}
+    if(!cache.proxyPath.empty())DeleteFileW(cache.proxyPath.c_str());
+    cache.proxyPath.clear();
 }
 HANDLE serveCurrentTheme(const wchar_t* path,DWORD share,LPSECURITY_ATTRIBUTES sa,DWORD flags,HANDLE templateFile) {
     auto& cache=store();std::filesystem::path sourcePath;std::shared_ptr<const ImportedMap> canonicalMap,classificationBase,holeBase;
@@ -187,15 +204,15 @@ HANDLE serveCurrentTheme(const wchar_t* path,DWORD share,LPSECURITY_ATTRIBUTES s
         if(canonicalWidth!=canonicalMap->width||canonicalHeight!=canonicalMap->height)return INVALID_HANDLE_VALUE;
         std::vector<uint8_t> output;output.reserve(offset+adjusted.size());
         output.insert(output.end(),theme.begin(),theme.begin()+offset);output.insert(output.end(),adjusted.begin(),adjusted.end());
-        wchar_t tempDir[MAX_PATH+1]{},tempFile[MAX_PATH+1]{};
-        if(!GetTempPathW(MAX_PATH,tempDir)||!GetTempFileNameW(tempDir,L"wkc",0,tempFile))throw std::runtime_error("Cannot create canonical W:A theme");
+        wchar_t tempFile[MAX_PATH+1]{};
+        if(!createSessionTempFile(L"wkc",tempFile))throw std::runtime_error("Cannot create canonical W:A theme");
         {std::ofstream out(tempFile,std::ios::binary|std::ios::trunc);if(!out.write(reinterpret_cast<const char*>(output.data()),output.size()))throw std::runtime_error("Cannot write canonical W:A theme");}
-        HANDLE keeper=originalW(tempFile,DELETE,FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,sa,OPEN_EXISTING,
-                                FILE_ATTRIBUTE_TEMPORARY|FILE_FLAG_DELETE_ON_CLOSE,templateFile);
+        HANDLE keeper=originalW(tempFile,0,FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,sa,OPEN_EXISTING,
+                                FILE_ATTRIBUTE_TEMPORARY,templateFile);
         if(keeper==INVALID_HANDLE_VALUE){DeleteFileW(tempFile);throw std::runtime_error("Cannot retain canonical W:A theme");}
         HANDLE result=originalW(tempFile,GENERIC_READ,share|FILE_SHARE_DELETE,sa,OPEN_EXISTING,
                                 (flags&~FILE_ATTRIBUTE_NORMAL)|FILE_ATTRIBUTE_TEMPORARY,templateFile);
-        if(result==INVALID_HANDLE_VALUE){CloseHandle(keeper);throw std::runtime_error("Cannot open canonical W:A theme");}
+        if(result==INVALID_HANDLE_VALUE){CloseHandle(keeper);DeleteFileW(tempFile);throw std::runtime_error("Cannot open canonical W:A theme");}
         {
             std::lock_guard lock(cache.mutex);clearThemeProxy(cache);
             cache.themeProxyPath=tempFile;cache.themeProxyKeeper=keeper;cache.themeSize=themeSize;cache.themeWriteTime=themeTime;
@@ -234,15 +251,15 @@ HANDLE serveCurrentTheme(const wchar_t* path,DWORD share,LPSECURITY_ATTRIBUTES s
     }
     std::vector<uint8_t> output;output.reserve(offset+adjusted.size());
     output.insert(output.end(),theme.begin(),theme.begin()+offset);output.insert(output.end(),adjusted.begin(),adjusted.end());
-    wchar_t tempDir[MAX_PATH+1]{},tempFile[MAX_PATH+1]{};
-    if(!GetTempPathW(MAX_PATH,tempDir)||!GetTempFileNameW(tempDir,L"wkt",0,tempFile))throw std::runtime_error("Cannot create adjusted W:A theme");
+    wchar_t tempFile[MAX_PATH+1]{};
+    if(!createSessionTempFile(L"wkt",tempFile))throw std::runtime_error("Cannot create adjusted W:A theme");
     {std::ofstream out(tempFile,std::ios::binary|std::ios::trunc);if(!out.write(reinterpret_cast<const char*>(output.data()),output.size()))throw std::runtime_error("Cannot write adjusted W:A theme");}
-    HANDLE keeper=originalW(tempFile,DELETE,FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,sa,OPEN_EXISTING,
-                            FILE_ATTRIBUTE_TEMPORARY|FILE_FLAG_DELETE_ON_CLOSE,templateFile);
+    HANDLE keeper=originalW(tempFile,0,FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,sa,OPEN_EXISTING,
+                            FILE_ATTRIBUTE_TEMPORARY,templateFile);
     if(keeper==INVALID_HANDLE_VALUE){DeleteFileW(tempFile);throw std::runtime_error("Cannot retain adjusted W:A theme");}
     HANDLE result=originalW(tempFile,GENERIC_READ,share|FILE_SHARE_DELETE,sa,OPEN_EXISTING,
                             (flags&~FILE_ATTRIBUTE_NORMAL)|FILE_ATTRIBUTE_TEMPORARY,templateFile);
-    if(result==INVALID_HANDLE_VALUE){CloseHandle(keeper);throw std::runtime_error("Cannot open adjusted W:A theme");}
+    if(result==INVALID_HANDLE_VALUE){CloseHandle(keeper);DeleteFileW(tempFile);throw std::runtime_error("Cannot open adjusted W:A theme");}
     auto rgba=writeRgbaPngMemory(desired);if(auto level=extractWaLevelMetadata(original.bytes))rgba=attachWaLevelMetadata(rgba,*level);
     auto imported=std::make_shared<ImportedMap>(sourcePath,std::move(desired),std::move(rgba),adjusted);imported->discardArtwork();
     imported->bordered=bordered;
@@ -766,6 +783,7 @@ bool installImports(HMODULE module) {
 static HMODULE testHost{};
 bool installTestImports(HMODULE module,const std::filesystem::path& root) {
     savedLevels=std::filesystem::weakly_canonical(root);gameRoot=savedLevels.parent_path();
+    runtimeDirectory=gameRoot/L"wkRGBA";clearRuntimeDirectory(runtimeDirectory);
     logPath=gameRoot/L"wkRGBA_loader_test.log";testHost=module;return installImports(module);
 }
 void uninstallTestImports() {
@@ -877,15 +895,15 @@ void acceptImage(Image image,const std::filesystem::path& source,std::vector<uin
     map->discardArtwork();
     auto& s=store();std::lock_guard lock(s.mutex);
     clearThemeProxy(s);
-    if(s.proxyKeeper!=INVALID_HANDLE_VALUE){CloseHandle(s.proxyKeeper);s.proxyKeeper=INVALID_HANDLE_VALUE;}
-    s.cachedSource.clear();s.proxyPath.clear();s.cachedSize=0;s.borderedMode=false;s.map=std::move(map);s.landBaseMap=s.map;s.classificationBaseMap.reset();s.placementClassificationSeeded=false;s.editorHoleCount=0;
+    clearMapProxy(s);
+    s.cachedSource.clear();s.cachedSize=0;s.borderedMode=false;s.map=std::move(map);s.landBaseMap=s.map;s.classificationBaseMap.reset();s.placementClassificationSeeded=false;s.editorHoleCount=0;
     s.networkCanonicalGameplay=networkCanonical;
 }
 void clearImport(){
     auto& s=store();std::lock_guard lock(s.mutex);
     clearThemeProxy(s);
-    if(s.proxyKeeper!=INVALID_HANDLE_VALUE){CloseHandle(s.proxyKeeper);s.proxyKeeper=INVALID_HANDLE_VALUE;}
-    s.cachedSource.clear();s.proxyPath.clear();s.cachedSize=0;s.borderedMode=false;s.map.reset();s.landBaseMap.reset();s.classificationBaseMap.reset();s.networkCanonicalGameplay=false;s.placementClassificationSeeded=false;s.editorHoleCount=0;s.networkLand.clear();
+    clearMapProxy(s);
+    s.cachedSource.clear();s.cachedSize=0;s.borderedMode=false;s.map.reset();s.landBaseMap.reset();s.classificationBaseMap.reset();s.networkCanonicalGameplay=false;s.placementClassificationSeeded=false;s.editorHoleCount=0;s.networkLand.clear();
 }
 HANDLE openNative(const wchar_t* path,DWORD access,DWORD share,LPSECURITY_ATTRIBUTES sa,DWORD disposition,DWORD flags,HANDLE templateFile) {
     if(!path || inside)
@@ -932,9 +950,9 @@ HANDLE openNative(const wchar_t* path,DWORD access,DWORD share,LPSECURITY_ATTRIB
             if(access&GENERIC_READ) {
                 auto& cache=store();std::lock_guard lock(cache.mutex);
                 if(cache.map && cache.cachedSource!=std::filesystem::weakly_canonical(path)) {
-                    if(cache.proxyKeeper!=INVALID_HANDLE_VALUE){CloseHandle(cache.proxyKeeper);cache.proxyKeeper=INVALID_HANDLE_VALUE;}
+                    clearMapProxy(cache);
                     clearThemeProxy(cache);
-                    cache.cachedSource.clear();cache.proxyPath.clear();cache.cachedSize=0;cache.borderedMode=false;cache.map.reset();cache.landBaseMap.reset();cache.classificationBaseMap.reset();cache.networkCanonicalGameplay=false;cache.placementClassificationSeeded=false;cache.editorHoleCount=0;
+                    cache.cachedSource.clear();cache.cachedSize=0;cache.borderedMode=false;cache.map.reset();cache.landBaseMap.reset();cache.classificationBaseMap.reset();cache.networkCanonicalGameplay=false;cache.placementClassificationSeeded=false;cache.editorHoleCount=0;
                     log("RGBA editor association cleared for indexed map");
                 }
             }
@@ -980,8 +998,8 @@ HANDLE openNative(const wchar_t* path,DWORD access,DWORD share,LPSECURITY_ATTRIB
         auto imported=std::make_shared<ImportedMap>(canonical,std::move(decoded.image),std::move(decoded.bytes),std::vector<uint8_t>{});
         // The native importer accepts dimensions divisible by eight.
         if(imported->width%8 || imported->height%8)throw std::runtime_error("W:A map dimensions must be multiples of 8");
-        wchar_t tempDir[MAX_PATH+1]{},tempFile[MAX_PATH+1]{};
-        if(!GetTempPathW(MAX_PATH,tempDir) || !GetTempFileNameW(tempDir,L"wkr",0,tempFile))throw std::runtime_error("Cannot create temporary native map");
+        wchar_t tempFile[MAX_PATH+1]{};
+        if(!createSessionTempFile(L"wkr",tempFile))throw std::runtime_error("Cannot create temporary native map");
         const auto levelSpan=proxyLevel?std::span<const uint8_t>(*proxyLevel):std::span<const uint8_t>{};
         const auto classificationRows=!air&&!bordered
             ?(std::min)(nativeProxyTopClearance(*imported->artwork()),nativeProxyEditorTopClearance):0;
@@ -1003,15 +1021,15 @@ HANDLE openNative(const wchar_t* path,DWORD access,DWORD share,LPSECURITY_ATTRIB
                 " top air rows for W:A automatic-placement classification");
         }
         imported->discardArtwork();
-        HANDLE keeper=originalW(tempFile,DELETE,FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,sa,OPEN_EXISTING,
-            FILE_ATTRIBUTE_TEMPORARY|FILE_FLAG_DELETE_ON_CLOSE,templateFile);
+        HANDLE keeper=originalW(tempFile,0,FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,sa,OPEN_EXISTING,
+            FILE_ATTRIBUTE_TEMPORARY,templateFile);
         if(keeper==INVALID_HANDLE_VALUE){DeleteFileW(tempFile);throw std::runtime_error("Cannot retain temporary native map");}
         HANDLE result=originalW(tempFile,GENERIC_READ,share|FILE_SHARE_DELETE,sa,OPEN_EXISTING,
             (flags&~FILE_ATTRIBUTE_NORMAL)|FILE_ATTRIBUTE_TEMPORARY,templateFile);
-        if(result==INVALID_HANDLE_VALUE){CloseHandle(keeper);throw std::runtime_error("Cannot reopen temporary native map");}
+        if(result==INVALID_HANDLE_VALUE){CloseHandle(keeper);DeleteFileW(tempFile);throw std::runtime_error("Cannot reopen temporary native map");}
         {
             std::lock_guard lock(cache.mutex);
-            if(cache.proxyKeeper!=INVALID_HANDLE_VALUE)CloseHandle(cache.proxyKeeper);
+            clearMapProxy(cache);
             clearThemeProxy(cache);
             cache.map=std::move(imported);cache.landBaseMap=cache.map;cache.cachedSource=canonical;cache.cachedSize=sourceSize;
             cache.cachedWriteTime=sourceTime;cache.borderedMode=bordered;cache.networkCanonicalGameplay=false;
@@ -1031,7 +1049,7 @@ bool install(HMODULE module) {
         if(!size || size==32768)return false;
         std::filesystem::path path(exe);
         if(lower(path.filename().wstring())!=L"wa.exe")return false;
-        const auto runtimeDirectory=path.parent_path()/L"wkRGBA";
+        runtimeDirectory=path.parent_path()/L"wkRGBA";
         // This directory is exclusively runtime output. Starting from an
         // empty directory prevents stale diagnostics from being mistaken for
         // current-session state and keeps the game folder tidy.

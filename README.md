@@ -72,7 +72,7 @@ The 112-colour fallback allows a client without wkRGBA to display the same basic
 - Worms Armageddon 3.8.1 (GOG or Steam executable)
 - Direct3D 9 Shader selected as the game's graphics renderer
 - WormKit module loading enabled
-- Windows with Direct3D 9 support
+- Windows with Direct3D 9 support, or Linux through Wine/Proton (experimental)
 
 For the best multiplayer experience, every participant should install the same wkRGBA build. A 112-colour fallback is provided for clients without the module, but mixed lobbies need further testing across schemes and large maps.
 
@@ -81,6 +81,8 @@ For the best multiplayer experience, every participant should install the same w
 Place `wkRGBA.dll` in the main Worms Armageddon directory, next to `WA.exe`. Start the game normally and select an RGBA PNG from `User\SavedLevels`.
 
 The module creates a `wkRGBA` directory beside the game executable for its runtime files and logs.
+
+On Linux, wkRGBA remains a Windows WormKit DLL and must run inside the same 32-bit Wine or Proton prefix as Worms Armageddon. Select the **Direct3D 9 Shader** renderer in the game. Wine support is experimental; include the files from the generated `wkRGBA` directory when reporting compatibility problems.
 
 ## Current limitations
 
